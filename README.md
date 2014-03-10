@@ -1,0 +1,2 @@
+jquery-pwstrength-bootstrap-rails
+=================================
