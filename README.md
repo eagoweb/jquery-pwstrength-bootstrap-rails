@@ -1,4 +1,4 @@
-Jquery Password Strengh for Bootstrap wrapper for Rails
+Jquery Password Strength for Bootstrap wrapper for Rails
 =======================================================
 
 Installation

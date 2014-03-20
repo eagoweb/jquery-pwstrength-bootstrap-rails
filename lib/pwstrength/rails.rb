@@ -1,4 +1,4 @@
-module PwStrengh
+module PwStrength
   module Rails
     class Engine < ::Rails::Engine
     end
