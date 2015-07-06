@@ -16,7 +16,9 @@ var rulesEngine = {};
 
 try {
     if (!jQuery && module && module.exports) {
-        var jQuery = require("jquery");
+        var jQuery = require("jquery"),
+            jsdom = require("jsdom").jsdom;
+        jQuery = jQuery(jsdom().parentWindow);
     }
 } catch (ignore) {}
 
@@ -25,15 +27,15 @@ try {
     var validation = {};
 
     rulesEngine.forbiddenSequences = [
-        "0123456789", "abcdefghijklmnopqrstuvxywz", "qwertyuiop", "asdfghjkl",
+        "0123456789", "abcdefghijklmnopqrstuvwxyz", "qwertyuiop", "asdfghjkl",
         "zxcvbnm", "!@#$%^&*()_+"
     ];
 
     validation.wordNotEmail = function (options, word, score) {
         if (word.match(/^([\w\!\#$\%\&\'\*\+\-\/\=\?\^\`{\|\}\~]+\.)*[\w\!\#$\%\&\'\*\+\-\/\=\?\^\`{\|\}\~]+@((((([a-z0-9]{1}[a-z0-9\-]{0,62}[a-z0-9]{1})|[a-z])\.)+[a-z]{2,6})|(\d{1,3}\.){3}\d{1,3}(\:\d{1,5})?)$/i)) {
-            options.instances.errors.push(options.ui.spanError(options, "email_as_password"));
             return score;
         }
+        return 0;
     };
 
     validation.wordLength = function (options, word, score) {
@@ -41,18 +43,16 @@ try {
             lenScore = Math.pow(wordlen, options.rules.raisePower);
         if (wordlen < options.common.minChar) {
             lenScore = (lenScore + score);
-            options.instances.errors.push(options.ui.spanError(options, "password_too_short"));
         }
         return lenScore;
     };
 
     validation.wordSimilarToUsername = function (options, word, score) {
         var username = $(options.common.usernameField).val();
-        if (username && word.toLowerCase().match(username.toLowerCase())) {
-            options.instances.errors.push(options.ui.spanError(options, "same_as_username"));
+        if (username && word.toLowerCase().match(username.replace(/[\-\[\]\/\{\}\(\)\*\+\=\?\:\.\\\^\$\|\!\,]/g, "\\$&").toLowerCase())) {
             return score;
         }
-        return false;
+        return 0;
     };
 
     validation.wordTwoCharacterClasses = function (options, word, score) {
@@ -61,16 +61,12 @@ try {
                 (word.match(/(.[!,@,#,$,%,\^,&,*,?,_,~])/) && word.match(/[a-zA-Z0-9_]/))) {
             return score;
         }
-        options.instances.errors.push(options.ui.spanError(options, "two_character_classes"));
-        return false;
+        return 0;
     };
 
     validation.wordRepetitions = function (options, word, score) {
-        if (word.match(/(.)\1\1/)) {
-            options.instances.errors.push(options.ui.spanError(options, "repeated_character"));
-            return score;
-        }
-        return false;
+        if (word.match(/(.)\1\1/)) { return score; }
+        return 0;
     };
 
     validation.wordSequences = function (options, word, score) {
@@ -78,21 +74,19 @@ try {
             j;
         if (word.length > 2) {
             $.each(rulesEngine.forbiddenSequences, function (idx, seq) {
+                if (found) { return; }
                 var sequences = [seq, seq.split('').reverse().join('')];
                 $.each(sequences, function (idx, sequence) {
-                    for (j = 0; j < (word.length - 3); j += 1) { //iterate the word trough a sliding window of size 3:
+                    for (j = 0; j < (word.length - 2); j += 1) { // iterate the word trough a sliding window of size 3:
                         if (sequence.indexOf(word.toLowerCase().substring(j, j + 3)) > -1) {
                             found = true;
                         }
                     }
                 });
             });
-            if (found) {
-                options.instances.errors.push(options.ui.spanError(options, "sequence_found"));
-                return score;
-            }
+            if (found) { return score; }
         }
-        return false;
+        return 0;
     };
 
     validation.wordLowercase = function (options, word, score) {
@@ -112,7 +106,7 @@ try {
     };
 
     validation.wordOneSpecialChar = function (options, word, score) {
-        return word.match(/.[!,@,#,$,%,\^,&,*,?,_,~]/) && score;
+        return word.match(/[!,@,#,$,%,\^,&,*,?,_,~]/) && score;
     };
 
     validation.wordTwoSpecialChar = function (options, word, score) {
@@ -140,7 +134,8 @@ try {
             if (active) {
                 var score = options.rules.scores[rule],
                     funct = rulesEngine.validation[rule],
-                    result;
+                    result,
+                    errorMessage;
 
                 if (!$.isFunction(funct)) {
                     funct = options.rules.extra[rule];
@@ -150,6 +145,12 @@ try {
                     result = funct(options, word, score);
                     if (result) {
                         totalScore += result;
+                    }
+                    if (result < 0 || (!$.isNumeric(result) && !result)) {
+                        errorMessage = options.ui.spanError(options, rule);
+                        if (errorMessage.length > 0) {
+                            options.instances.errors.push(errorMessage);
+                        }
                     }
                 }
             }
@@ -175,9 +176,15 @@ var defaultOptions = {};
 defaultOptions.common = {};
 defaultOptions.common.minChar = 6;
 defaultOptions.common.usernameField = "#username";
+defaultOptions.common.userInputs = [
+    // Selectors for input fields with user input
+];
 defaultOptions.common.onLoad = undefined;
 defaultOptions.common.onKeyUp = undefined;
 defaultOptions.common.zxcvbn = false;
+defaultOptions.common.zxcvbnTerms = [
+    // List of disrecommended words
+];
 defaultOptions.common.debug = false;
 
 defaultOptions.rules = {};
@@ -186,7 +193,7 @@ defaultOptions.rules.scores = {
     wordNotEmail: -100,
     wordLength: -50,
     wordSimilarToUsername: -100,
-    wordSequences: -50,
+    wordSequences: -20,
     wordTwoCharacterClasses: 2,
     wordRepetitions: -25,
     wordLowercase: 1,
@@ -226,19 +233,31 @@ defaultOptions.ui.showStatus = false;
 defaultOptions.ui.spanError = function (options, key) {
     "use strict";
     var text = options.ui.errorMessages[key];
+    if (!text) { return ''; }
     return '<span style="color: #d52929">' + text + '</span>';
 };
+defaultOptions.ui.popoverError = function (errors) {
+    "use strict";
+    var message = "<div>Errors:<ul class='error-list' style='margin-bottom: 0;'>";
+
+    jQuery.each(errors, function (idx, err) {
+        message += "<li>" + err + "</li>";
+    });
+    message += "</ul></div>";
+    return message;
+};
 defaultOptions.ui.errorMessages = {
-    password_too_short: "The Password is too short",
-    email_as_password: "Do not use your email as your password",
-    same_as_username: "Your password cannot contain your username",
-    two_character_classes: "Use different character classes",
-    repeated_character: "Too many repetitions",
-    sequence_found: "Your password contains sequences"
+    wordLength: "Your password is too short",
+    wordNotEmail: "Do not use your email as your password",
+    wordSimilarToUsername: "Your password cannot contain your username",
+    wordTwoCharacterClasses: "Use different character classes",
+    wordRepetitions: "Too many repetitions",
+    wordSequences: "Your password contains sequences"
 };
 defaultOptions.ui.verdicts = ["Weak", "Normal", "Medium", "Strong", "Very Strong"];
 defaultOptions.ui.showVerdicts = true;
 defaultOptions.ui.showVerdictsInsideProgressBar = false;
+defaultOptions.ui.useVerdictCssClass = false;
 defaultOptions.ui.showErrors = false;
 defaultOptions.ui.container = undefined;
 defaultOptions.ui.viewports = {
@@ -386,9 +405,13 @@ var ui = {};
         $bar.css("width", percentage + '%');
     };
 
-    ui.updateVerdict = function (options, $el, text) {
+    ui.updateVerdict = function (options, $el, cssClass, text) {
         var $verdict = ui.getUIElements(options, $el).$verdict;
-        $verdict.text(text);
+        $verdict.removeClass(barClasses.join(' '));
+        if (cssClass > -1) {
+            $verdict.addClass(barClasses[cssClass]);
+        }
+        $verdict.html(text);
     };
 
     ui.updateErrors = function (options, $el) {
@@ -405,18 +428,18 @@ var ui = {};
             html = "",
             hide = true;
 
-        if (options.ui.showVerdicts && verdictText.length > 0) {
+        if (options.ui.showVerdicts &&
+                !options.ui.showVerdictsInsideProgressBar &&
+                verdictText.length > 0) {
             html = "<h5><span class='password-verdict'>" + verdictText +
                 "</span></h5>";
             hide = false;
         }
         if (options.ui.showErrors) {
-            html += "<div><ul class='error-list'>";
-            $.each(options.instances.errors, function (idx, err) {
-                html += "<li>" + err + "</li>";
+            if (options.instances.errors.length > 0) {
                 hide = false;
-            });
-            html += "</ul></div>";
+            }
+            html += options.ui.popoverError(options.instances.errors);
         }
 
         if (hide) {
@@ -451,39 +474,56 @@ var ui = {};
 
     ui.percentage = function (score, maximun) {
         var result = Math.floor(100 * score / maximun);
-        result = result < 0 ? 0 : result;
+        result = result < 0 ? 1 : result; // Don't show the progress bar empty
         result = result > 100 ? 100 : result;
         return result;
     };
 
-    ui.updateUI = function (options, $el, score) {
-        var cssClass, barPercentage, verdictText;
+    ui.getVerdictAndCssClass = function (options, score) {
+        var cssClass, verdictText, level;
 
         if (score <= 0) {
             cssClass = 0;
-            verdictText = "";
+            level = -1;
+            verdictText = options.ui.verdicts[0];
         } else if (score < options.ui.scores[0]) {
             cssClass = 0;
+            level = 0;
             verdictText = options.ui.verdicts[0];
         } else if (score < options.ui.scores[1]) {
             cssClass = 0;
+            level = 1;
             verdictText = options.ui.verdicts[1];
         } else if (score < options.ui.scores[2]) {
             cssClass = 1;
+            level = 2;
             verdictText = options.ui.verdicts[2];
         } else if (score < options.ui.scores[3]) {
             cssClass = 1;
+            level = 3;
             verdictText = options.ui.verdicts[3];
         } else {
             cssClass = 2;
+            level = 4;
             verdictText = options.ui.verdicts[4];
         }
+
+        return [verdictText, cssClass, level];
+    };
+
+    ui.updateUI = function (options, $el, score) {
+        var cssClass, barPercentage, verdictText, verdictCssClass;
+
+        cssClass = ui.getVerdictAndCssClass(options, score);
+        verdictText = score === 0 ? '' : cssClass[0];
+        cssClass = cssClass[1];
+        verdictCssClass = options.ui.useVerdictCssClass ? cssClass : -1;
 
         if (options.ui.showProgressBar) {
             barPercentage = ui.percentage(score, options.ui.scores[3]);
             ui.updateProgressBar(options, $el, cssClass, barPercentage);
             if (options.ui.showVerdictsInsideProgressBar) {
-                ui.updateVerdict(options, $el, verdictText);
+                ui.updateVerdict(options, $el, verdictCssClass, verdictText);
             }
         }
 
@@ -495,7 +535,7 @@ var ui = {};
             ui.updatePopover(options, $el, verdictText);
         } else {
             if (options.ui.showVerdicts && !options.ui.showVerdictsInsideProgressBar) {
-                ui.updateVerdict(options, $el, verdictText);
+                ui.updateVerdict(options, $el, verdictCssClass, verdictText);
             }
             if (options.ui.showErrors) {
                 ui.updateErrors(options, $el);
@@ -519,26 +559,42 @@ var methods = {};
         var $el = $(event.target),
             options = $el.data("pwstrength-bootstrap"),
             word = $el.val(),
-            username,
+            userInputs,
+            verdictText,
+            verdictLevel,
             score;
 
+        if (options === undefined) { return; }
+
         options.instances.errors = [];
-        if (options.common.zxcvbn) {
-            username = $(options.common.usernameField).val();
-            if (username && username.length > 0) {
-                score = zxcvbn(word, [username]).entropy;
-            } else {
-                score = zxcvbn(word).entropy;
-            }
+        if (word.length === 0) {
+            score = 0;
         } else {
-            score = rulesEngine.executeRules(options, word);
+            if (options.common.zxcvbn) {
+                userInputs = [];
+                $.each(options.common.userInputs.concat([options.common.usernameField]), function (idx, selector) {
+                    var value = $(selector).val();
+                    if (value) { userInputs.push(value); }
+                });
+                userInputs = userInputs.concat(options.common.zxcvbnTerms);
+                score = zxcvbn(word, userInputs).entropy;
+            } else {
+                score = rulesEngine.executeRules(options, word);
+            }
         }
         ui.updateUI(options, $el, score);
+        verdictText = ui.getVerdictAndCssClass(options, score);
+        verdictLevel = verdictText[2];
+        verdictText = verdictText[0];
 
-        if (options.common.debug) { console.log(score); }
+        if (options.common.debug) { console.log(score + ' - ' + verdictText); }
 
         if ($.isFunction(options.common.onKeyUp)) {
-            options.common.onKeyUp(event);
+            options.common.onKeyUp(event, {
+                score: score,
+                verdictText: verdictText,
+                verdictLevel: verdictLevel
+            });
         }
     };
 
@@ -553,7 +609,14 @@ var methods = {};
             localOptions.instances = {};
             $el.data("pwstrength-bootstrap", localOptions);
             $el.on("keyup", onKeyUp);
+            $el.on("change", onKeyUp);
+            $el.on("onpaste", onKeyUp);
+
             ui.initUI(localOptions, $el);
+            if ($.trim($el.val())) { // Not empty, calculate the strength
+                $el.trigger("keyup");
+            }
+
             if ($.isFunction(localOptions.common.onLoad)) {
                 localOptions.common.onLoad();
             }
